@@ -1,227 +1,3 @@
-# Auto Parts Finder Class - MEJORADO con Web Scraping Ético
-class AutoPartsFinder:
-    def _init_(self):
-        # Intentar multiples nombres de variables de entorno comunes
-        self.api_key = (
-            os.environ.get('SERPAPI_KEY') or 
-            os.environ.get('SERPAPI_API_KEY') or 
-            os.environ.get('SERP_API_KEY') or
-            os.environ.get('serpapi_key') or
-            os.environ.get('SERPAPI')
-        )
-        
-        self.base_url = "https://serpapi.com/search"
-        self.cache = {}
-        self.cache_ttl = 300  # 5 minutos para repuestos
-        self.timeouts = {'connect': 3, 'read': 8}
-        
-        # Tiendas especializadas en auto parts prioritarias
-        self.preferred_stores = [
-            'autozone', 'advance auto parts', 'oreilly', 'napa', 'pepboys',
-            'rock auto', 'car parts', 'auto parts warehouse', 'parts geek',
-            'amazon automotive', 'walmart automotive', 'jegs', 'summit racing'
-        ]
-        
-        # Sitios no especializados en automotive que queremos filtrar
-        self.non_automotive_stores = [
-            'alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate',
-            'general stores', 'toys', 'clothing', 'electronics'
-        ]
-        
-        # URLs directas de tiendas para scraping como fallback
-        self.direct_store_urls = {
-            'autozone': 'https://www.autozone.com',
-            'advance': 'https://shop.advanceautoparts.com',
-            'oreilly': 'https://www.oreillyauto.com',
-            'napa': 'https://www.napaonline.com',
-            'rockauto': 'https://www.rockauto.com'
-        }
-        
-        if not self.api_key:
-            print("WARNING: No se encontro API key en variables de entorno")
-            print("Variables verificadas: SERPAPI_KEY, SERPAPI_API_KEY, SERP_API_KEY, serpapi_key, SERPAPI")
-            print("NOTA: Se usará scraping directo como fallback")
-        else:
-            print(f"SUCCESS: SerpAPI configurado correctamente para Auto Parts (key: {self.api_key[:8]}...)")
-    
-    def is_api_configured(self):
-        return bool(self.api_key)
-    
-    def _extract_price(self, price_str):
-        if not price_str:
-            return 0.0
-        try:
-            match = re.search(r'\$\s*(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)', str(price_str))
-            if match:
-                price_value = float(match.group(1).replace(',', ''))
-                # Precios realistas para auto parts (entre $1 y $2000)
-                return price_value if 1.0 <= price_value <= 2000 else 0.0
-        except:
-            pass
-        return 0.0
-    
-    def _generate_realistic_auto_part_price(self, query, index=0):
-        """Genera precios realistas para repuestos automotores"""
-        query_lower = query.lower()
-        
-        # Categorías de precios para auto parts
-        if any(word in query_lower for word in ['engine', 'transmission', 'turbo', 'catalytic converter']):
-            base_price = 400  # Componentes mayores
-        elif any(word in query_lower for word in ['brake', 'rotor', 'caliper', 'strut', 'shock']):
-            base_price = 80   # Frenos y suspensión
-        elif any(word in query_lower for word in ['alternator', 'starter', 'water pump', 'fuel pump']):
-            base_price = 120  # Componentes eléctricos/mecánicos
-        elif any(word in query_lower for word in ['filter', 'spark plug', 'belt', 'hose']):
-            base_price = 25   # Mantenimiento básico
-        elif any(word in query_lower for word in ['headlight', 'taillight', 'mirror', 'handle']):
-            base_price = 50   # Exterior/luces
-        else:
-            base_price = 60   # Precio promedio general
-            
-        return round(base_price * (1 + index * 0.2), 2)
-    
-    def _clean_text(self, text):
-        if not text:
-            return "Sin informacion"
-        return html.escape(str(text)[:150])  # Más caracteres para descripciones de repuestos
-    
-    def _is_automotive_relevant(self, item):
-        """Verifica si el resultado es relevante para repuestos automotores"""
-        if not item:
-            return False
-            
-        title = str(item.get('title', '')).lower()
-        source = str(item.get('source', '')).lower()
-        snippet = str(item.get('snippet', '')).lower()
-        
-        # Palabras clave automotrices
-        automotive_keywords = [
-            'auto', 'car', 'vehicle', 'automotive', 'motor', 'engine',
-            'brake', 'filter', 'spark', 'battery', 'alternator', 'starter',
-            'transmission', 'suspension', 'exhaust', 'radiator', 'fuel',
-            'ignition', 'clutch', 'differential', 'axle', 'steering',
-            'tire', 'wheel', 'part', 'replacement', 'oem', 'aftermarket'
-        ]
-        
-        # Verificar si contiene palabras automotrices
-        text_to_check = f"{title} {source} {snippet}"
-        has_automotive_keywords = any(keyword in text_to_check for keyword in automotive_keywords)
-        
-        # Verificar marcas de vehículos
-        vehicle_makes = list(VEHICLE_DATABASE['makes'].keys())
-        has_vehicle_make = any(make in text_to_check for make in vehicle_makes)
-        
-        # Verificar tiendas especializadas
-        is_auto_store = any(store in source for store in self.preferred_stores)
-        
-        return has_automotive_keywords or has_vehicle_make or is_auto_store
-    
-    def _get_valid_link(self, item):
-        if not item:
-            return "#"
-        product_link = item.get('product_link', '')
-        if product_link:
-            return product_link
-        general_link = item.get('link', '')
-        if general_link:
-            return general_link
-        title = item.get('title', '')
-        if title:
-            search_query = quote_plus(f"auto parts {str(title)[:50]}")
-            return f"https://www.google.com/search?tbm=shop&q={search_query}"
-        return "#"
-    
-    def _optimize_auto_part_query(self, query):
-        """Optimiza la consulta para búsqueda de repuestos"""
-        if not query:
-            return "auto parts"
-            
-        query = query.strip().lower()
-        
-        # Si ya contiene términos automotrices, devolver como está
-        automotive_terms = ['auto', 'car', 'automotive', 'vehicle', 'part', 'parts']
-        if any(term in query for term in automotive_terms):
-            return query
-        
-        # Agregar contexto automotriz
-        return f"{query} auto parts"
-    
-    def _make_api_request(self, engine, query):
-        if not self.api_key:
-            return None
-        
-        # Optimizar query para auto parts
-        optimized_query = self._optimize_auto_part_query(query)
-        
-        params = {
-            'engine': engine, 
-            'q': optimized_query, 
-            'api_key': self.api_key, 
-            'num': 8,  # Más resultados para filtrar mejor
-            'location': 'United States', 
-            'gl': 'us'
-        }
-        
-        try:
-            time.sleep(0.3)
-            response = requests.get(self.base_url, params=params, timeout=(self.timeouts['connect'], self.timeouts['read']))
-            if response.status_code != 200:
-                return None
-            return response.json()
-        except Exception as e:
-            print(f"Error en request: {e}")
-            return None
-    
-    def _scrape_direct_stores(self, query, max_results=3):
-        """
-        Scraping directo de tiendas de auto parts como fallback
-        """
-        if not BS4_AVAILABLE:
-            print("⚠ BeautifulSoup4 no disponible para scraping directo")
-            return []
-        
-        scraped_products = []
-        
-        try:
-            print(f"🔍 Iniciando scraping directo para: {query}")
-            
-            # Construir URLs de búsqueda para tiendas específicas
-            search_urls = []
-            
-            # AutoZone
-            autozone_search = f"https://www.autozone.com/search?searchText={quote_plus(query)}"
-            search_urls.append(('AutoZone', autozone_search))
-            
-            # Advance Auto Parts (solo si está disponible)
-            advance_search = f"https://shop.advanceautoparts.com/find/?searchTerm={quote_plus(query)}"
-            search_urls.append(('Advance Auto Parts', advance_search))
-            
-            for store_name, search_url in search_urls[:2]:  # Limitar a 2 tiendas para velocidad
-                try:
-                    print(f"🛒 Scraping {store_name}...")
-                    response = ethical_scraper.make_request(search_url)
-                    
-                    if response and response.status_code == 200:
-                        soup = BeautifulSoup(response.content, 'html.parser')
-                        
-                        # Extraer productos de la página de resultados
-                        products = self._extract_products_from_search_page(soup, store_name, query)
-                        scraped_products.extend(products[:max_results])
-                        
-                        if len(scraped_products) >= max_results:
-                            break
-                            
-                except Exception as e:
-                    print(f"❌ Error scraping {store_name}: {e}")
-                    continue
-            
-            print(f"✅ Scraping directo completado: {len(scraped_products)} productos encontrados")
-            return scraped_products
-            
-        except Exception as e:
-            print(f"❌ Error general en scraping directo: {e}")
-            return scraped_products
-
 # webapp.py - Auto Parts Finder USA con Búsqueda por Imagen y Web Scraping Ético
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
@@ -288,7 +64,7 @@ class EthicalWebScraper:
     - Rate limiting
     """
     
-    def _init_(self, base_url=None, delay_range=(1, 3), max_retries=3):
+    def __init__(self, base_url=None, delay_range=(1, 3), max_retries=3):
         self.base_url = base_url
         self.delay_range = delay_range
         self.max_retries = max_retries
@@ -328,7 +104,7 @@ class EthicalWebScraper:
         """Generar headers HTTP realistas"""
         return {
             'User-Agent': self._get_random_user_agent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,/;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9,es;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
             'DNT': '1',
@@ -465,220 +241,102 @@ class EthicalWebScraper:
             scraper_logger.error(f"Error inesperado: {e}")
             return None
     
-    def scrape_auto_parts_page(self, url):
+    def _extract_products_from_search_page(self, soup, store_name, query):
         """
-        Extraer información específica de auto parts de una página
+        Extraer productos de páginas de búsqueda de auto parts
         """
-        if not BS4_AVAILABLE:
-            scraper_logger.error("BeautifulSoup4 no disponible para scraping")
-            return None
-        
-        response = self.make_request(url)
-        if not response:
-            return None
+        products = []
         
         try:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Extraer información común de auto parts
-            product_info = {
-                'url': url,
-                'title': self._extract_title(soup),
-                'price': self._extract_price(soup),
-                'availability': self._extract_availability(soup),
-                'part_number': self._extract_part_number(soup),
-                'brand': self._extract_brand(soup),
-                'description': self._extract_description(soup),
-                'images': self._extract_images(soup, url),
-                'specifications': self._extract_specifications(soup)
+            # Selectores específicos para diferentes tiendas
+            product_selectors = {
+                'AutoZone': [
+                    '.product-tile',
+                    '.product-item',
+                    '.search-result-item'
+                ],
+                'Advance Auto Parts': [
+                    '.product-tile',
+                    '.search-result',
+                    '.product-card'
+                ],
+                'default': [
+                    '[data-testid*="product"]',
+                    '.product',
+                    '.item',
+                    '.result'
+                ]
             }
             
-            scraper_logger.info(f"Datos extraídos de {url}: {product_info['title']}")
-            return product_info
+            selectors = product_selectors.get(store_name, product_selectors['default'])
+            
+            for selector in selectors:
+                product_elements = soup.select(selector)
+                if product_elements:
+                    break
+            
+            for element in product_elements[:3]:  # Máximo 3 productos por tienda
+                try:
+                    # Extraer título
+                    title_selectors = ['h2', 'h3', '.product-name', '.title', 'a[title]']
+                    title = "Repuesto automotriz"
+                    
+                    for title_sel in title_selectors:
+                        title_elem = element.select_one(title_sel)
+                        if title_elem and title_elem.get_text(strip=True):
+                            title = title_elem.get_text(strip=True)[:100]
+                            break
+                    
+                    # Extraer precio
+                    price_selectors = ['.price', '.cost', '[class*="price"]', '[data-price]']
+                    price = "$0.00"
+                    
+                    for price_sel in price_selectors:
+                        price_elem = element.select_one(price_sel)
+                        if price_elem:
+                            price_text = price_elem.get_text(strip=True)
+                            price_match = re.search(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', price_text)
+                            if price_match:
+                                price = price_match.group(0)
+                                break
+                    
+                    # Extraer enlace
+                    link_elem = element.select_one('a[href]')
+                    link = "#"
+                    if link_elem:
+                        href = link_elem.get('href')
+                        if href:
+                            if href.startswith('http'):
+                                link = href
+                            elif href.startswith('/'):
+                                if store_name == 'AutoZone':
+                                    link = f"https://www.autozone.com{href}"
+                                elif store_name == 'Advance Auto Parts':
+                                    link = f"https://shop.advanceautoparts.com{href}"
+                                else:
+                                    link = href
+                    
+                    if title and title != "Repuesto automotriz" and "$" in price:
+                        products.append({
+                            'title': title,
+                            'price': price,
+                            'store': store_name,
+                            'link': link,
+                            'source': 'scraping_directo'
+                        })
+                
+                except Exception as e:
+                    scraper_logger.warning(f"Error extrayendo producto individual: {e}")
+                    continue
+            
+            scraper_logger.info(f"Extraídos {len(products)} productos de {store_name}")
+            return products
             
         except Exception as e:
-            scraper_logger.error(f"Error parseando página {url}: {e}")
-            return None
-    
-    def _extract_title(self, soup):
-        """Extraer título del producto"""
-        selectors = [
-            'h1[data-testid="product-title"]',
-            'h1.product-title',
-            'h1.ProductTitle',
-            '.product-name h1',
-            'h1',
-            '.product-title',
-            '[data-testid="product-name"]'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text(strip=True)
-        return "Título no encontrado"
-    
-    def _extract_price(self, soup):
-        """Extraer precio del producto"""
-        selectors = [
-            '.price',
-            '.product-price',
-            '[data-testid="price"]',
-            '.current-price',
-            '.sale-price',
-            '.price-current',
-            '.ProductPrice',
-            '[class*="price"]'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                price_text = element.get_text(strip=True)
-                # Buscar patrón de precio
-                price_match = re.search(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', price_text)
-                if price_match:
-                    return price_match.group(0)
-        
-        return "Precio no disponible"
-    
-    def _extract_availability(self, soup):
-        """Extraer disponibilidad"""
-        selectors = [
-            '.availability',
-            '.stock-status',
-            '[data-testid="availability"]',
-            '.in-stock',
-            '.out-of-stock'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text(strip=True)
-        return "Disponibilidad no especificada"
-    
-    def _extract_part_number(self, soup):
-        """Extraer número de parte"""
-        # Buscar en texto que contenga "Part Number", "SKU", "Model"
-        text = soup.get_text()
-        patterns = [
-            r'Part Number[:\s]+([A-Z0-9\-]+)',
-            r'SKU[:\s]+([A-Z0-9\-]+)',
-            r'Model[:\s]+([A-Z0-9\-]+)',
-            r'Item[:\s]+([A-Z0-9\-]+)'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        return "N/A"
-    
-    def _extract_brand(self, soup):
-        """Extraer marca"""
-        selectors = [
-            '.brand',
-            '.manufacturer',
-            '[data-testid="brand"]',
-            '.product-brand'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text(strip=True)
-        return "Marca no especificada"
-    
-    def _extract_description(self, soup):
-        """Extraer descripción"""
-        selectors = [
-            '.product-description',
-            '.description',
-            '[data-testid="description"]',
-            '.product-details'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                desc = element.get_text(strip=True)
-                return desc[:300] + "..." if len(desc) > 300 else desc
-        return "Descripción no disponible"
-    
-    def _extract_images(self, soup, base_url):
-        """Extraer URLs de imágenes"""
-        images = []
-        selectors = [
-            '.product-image img',
-            '.product-photos img',
-            '[data-testid="product-image"] img'
-        ]
-        
-        for selector in selectors:
-            elements = soup.select(selector)
-            for img in elements[:3]:  # Máximo 3 imágenes
-                src = img.get('src') or img.get('data-src')
-                if src:
-                    if src.startswith('//'):
-                        src = 'https:' + src
-                    elif src.startswith('/'):
-                        src = urljoin(base_url, src)
-                    images.append(src)
-        
-        return images
-    
-    def _extract_specifications(self, soup):
-        """Extraer especificaciones técnicas"""
-        specs = {}
-        
-        # Buscar tablas de especificaciones
-        spec_tables = soup.select('.specifications table, .specs table, .product-specs table')
-        
-        for table in spec_tables:
-            rows = table.select('tr')
-            for row in rows:
-                cells = row.select('td, th')
-                if len(cells) >= 2:
-                    key = cells[0].get_text(strip=True)
-                    value = cells[1].get_text(strip=True)
-                    if key and value:
-                        specs[key] = value
-        
-        return specs
-    
-    def scrape_multiple_urls(self, urls, max_pages=10):
-        """
-        Scraping de múltiples URLs con límite de páginas
-        """
-        results = []
-        processed = 0
-        
-        for url in urls:
-            if processed >= max_pages:
-                scraper_logger.info(f"Límite de {max_pages} páginas alcanzado")
-                break
-            
-            try:
-                product_data = self.scrape_auto_parts_page(url)
-                if product_data:
-                    results.append(product_data)
-                    processed += 1
-                    scraper_logger.info(f"Procesado {processed}/{min(len(urls), max_pages)}: {url}")
-                else:
-                    scraper_logger.warning(f"No se pudieron extraer datos de {url}")
-                    
-            except Exception as e:
-                scraper_logger.error(f"Error procesando {url}: {e}")
-                continue
-        
-        scraper_logger.info(f"Scraping completado: {len(results)} productos extraídos de {processed} páginas")
-        return results
+            scraper_logger.error(f"Error general extrayendo productos de {store_name}: {e}")
+            return products
 
-# Instancia global del scraper ético
-ethical_scraper = EthicalWebScraper(delay_range=(1.5, 3.0), max_retries=3)
-
-app = Flask(_name_)
+app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'fallback-key-change-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = 1800
 app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -740,7 +398,7 @@ VEHICLE_DATABASE = {
 
 # Firebase Auth Class
 class FirebaseAuth:
-    def _init_(self):
+    def __init__(self):
         self.firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY")
         if not self.firebase_web_api_key:
             print("WARNING: FIREBASE_WEB_API_KEY no configurada")
@@ -821,8 +479,6 @@ class FirebaseAuth:
             'user_email': session.get('user_email'),
             'id_token': session.get('id_token')
         }
-
-firebase_auth = FirebaseAuth()
 
 def login_required(f):
     @wraps(f)
@@ -905,7 +561,7 @@ def validate_image(image_content):
 
 # Auto Parts Finder Class - ESPECIALIZADO para repuestos automotores
 class AutoPartsFinder:
-    def _init_(self):
+    def __init__(self):
         # Intentar multiples nombres de variables de entorno comunes
         self.api_key = (
             os.environ.get('SERPAPI_KEY') or 
@@ -924,7 +580,7 @@ class AutoPartsFinder:
         self.preferred_stores = [
             'autozone', 'advance auto parts', 'oreilly', 'napa', 'pepboys',
             'rock auto', 'car parts', 'auto parts warehouse', 'parts geek',
-            'amazon automotive', 'walmart automotive'
+            'amazon automotive', 'walmart automotive', 'jegs', 'summit racing'
         ]
         
         # Sitios no especializados en automotive que queremos filtrar
@@ -933,9 +589,19 @@ class AutoPartsFinder:
             'general stores', 'toys', 'clothing', 'electronics'
         ]
         
+        # URLs directas de tiendas para scraping como fallback
+        self.direct_store_urls = {
+            'autozone': 'https://www.autozone.com',
+            'advance': 'https://shop.advanceautoparts.com',
+            'oreilly': 'https://www.oreillyauto.com',
+            'napa': 'https://www.napaonline.com',
+            'rockauto': 'https://www.rockauto.com'
+        }
+        
         if not self.api_key:
             print("WARNING: No se encontro API key en variables de entorno")
             print("Variables verificadas: SERPAPI_KEY, SERPAPI_API_KEY, SERP_API_KEY, serpapi_key, SERPAPI")
+            print("NOTA: Se usará scraping directo como fallback")
         else:
             print(f"SUCCESS: SerpAPI configurado correctamente para Auto Parts (key: {self.api_key[:8]}...)")
     
@@ -1119,6 +785,56 @@ class AutoPartsFinder:
                 continue
         return products
     
+    def _scrape_direct_stores(self, query, max_results=3):
+        """
+        Scraping directo de tiendas de auto parts como fallback
+        """
+        if not BS4_AVAILABLE:
+            print("⚠ BeautifulSoup4 no disponible para scraping directo")
+            return []
+        
+        scraped_products = []
+        
+        try:
+            print(f"🔍 Iniciando scraping directo para: {query}")
+            
+            # Construir URLs de búsqueda para tiendas específicas
+            search_urls = []
+            
+            # AutoZone
+            autozone_search = f"https://www.autozone.com/search?searchText={quote_plus(query)}"
+            search_urls.append(('AutoZone', autozone_search))
+            
+            # Advance Auto Parts (solo si está disponible)
+            advance_search = f"https://shop.advanceautoparts.com/find/?searchTerm={quote_plus(query)}"
+            search_urls.append(('Advance Auto Parts', advance_search))
+            
+            for store_name, search_url in search_urls[:2]:  # Limitar a 2 tiendas para velocidad
+                try:
+                    print(f"🛒 Scraping {store_name}...")
+                    response = ethical_scraper.make_request(search_url)
+                    
+                    if response and response.status_code == 200:
+                        soup = BeautifulSoup(response.content, 'html.parser')
+                        
+                        # Extraer productos de la página de resultados
+                        products = ethical_scraper._extract_products_from_search_page(soup, store_name, query)
+                        scraped_products.extend(products[:max_results])
+                        
+                        if len(scraped_products) >= max_results:
+                            break
+                            
+                except Exception as e:
+                    print(f"❌ Error scraping {store_name}: {e}")
+                    continue
+            
+            print(f"✅ Scraping directo completado: {len(scraped_products)} productos encontrados")
+            return scraped_products
+            
+        except Exception as e:
+            print(f"❌ Error general en scraping directo: {e}")
+            return scraped_products
+    
     def search_auto_parts(self, query=None, image_content=None, vehicle_info=None):
         """Búsqueda especializada en repuestos automotores"""
         # Determinar consulta final
@@ -1255,13 +971,10 @@ class AutoPartsFinder:
             })
         return examples
 
-# Instancia global de AutoPartsFinder mejorado
-auto_parts_finder = AutoPartsFinder()
-
 # Configuración adicional para el scraper
 def configure_scraper_for_auto_parts():
     """Configurar el scraper específicamente para auto parts"""
-    if BS4_AVAILABLE:
+    if BS4_AVAILABLE and 'ethical_scraper' in globals():
         # Configurar user agents específicos para auto parts
         auto_parts_user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -1278,12 +991,435 @@ def configure_scraper_for_auto_parts():
     else:
         print("⚠ BeautifulSoup4 no disponible - scraping directo deshabilitado")
 
-# Configurar el scraper al inicio
-configure_scraper_for_auto_parts()
+# ==============================================================================
+# RUTAS DE LA APLICACIÓN
+# ==============================================================================
 
 @app.route('/')
 def home():
     return render_page("Auto Parts Finder", "<div class='container'><h1>Auto Parts Finder</h1><div class='subtitle'>Encuentra repuestos automotrices en USA</div></div>")
+
+@app.route('/login', methods=['GET'])
+def auth_login_page():
+    if firebase_auth and firebase_auth.is_user_logged_in():
+        return redirect(url_for('search_page'))
+    
+    login_content = '''
+    <div class="container">
+        <h1>Auto Parts Finder</h1>
+        <div class="subtitle">Iniciar Sesión</div>
+        
+        <div id="flash-messages"></div>
+        
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <input type="email" id="email" placeholder="Correo electrónico" required>
+            <input type="password" id="password" placeholder="Contraseña" required>
+            <button type="submit" id="loginBtn">Iniciar Sesión</button>
+        </form>
+        
+        <div class="loading" id="loginLoading">
+            <div class="spinner"></div>
+            <p>Iniciando sesión...</p>
+        </div>
+        
+        <div class="error" id="loginError"></div>
+        
+        <div style="text-align: center; margin-top: 20px;">
+            <p style="color: #666; font-size: 14px;">Demo: admin@test.com / password123</p>
+        </div>
+    </div>
+    
+    <script>
+    async function handleLogin(event) {
+        event.preventDefault();
+        
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        
+        document.getElementById('loginForm').style.display = 'none';
+        document.getElementById('loginLoading').style.display = 'block';
+        document.getElementById('loginError').style.display = 'none';
+        
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                window.location.href = '/search';
+            } else {
+                document.getElementById('loginError').textContent = result.message || 'Error de login';
+                document.getElementById('loginError').style.display = 'block';
+                document.getElementById('loginForm').style.display = 'block';
+                document.getElementById('loginLoading').style.display = 'none';
+            }
+        } catch (error) {
+            document.getElementById('loginError').textContent = 'Error de conexión';
+            document.getElementById('loginError').style.display = 'block';
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('loginLoading').style.display = 'none';
+        }
+    }
+    </script>
+    '''
+    
+    return render_page("Login - Auto Parts Finder", login_content)
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    if not firebase_auth:
+        return jsonify({'success': False, 'message': 'Servicio de autenticación no disponible'})
+    
+    try:
+        data = request.get_json()
+        email = data.get('email', '').strip()
+        password = data.get('password', '').strip()
+        
+        if not email or not password:
+            return jsonify({'success': False, 'message': 'Email y contraseña requeridos'})
+        
+        result = firebase_auth.login_user(email, password)
+        
+        if result['success']:
+            firebase_auth.set_user_session(result['user_data'])
+            return jsonify(result)
+        else:
+            return jsonify(result)
+            
+    except Exception as e:
+        print(f"Login error: {e}")
+        return jsonify({'success': False, 'message': 'Error interno del servidor'})
+
+@app.route('/logout')
+def logout():
+    if firebase_auth:
+        firebase_auth.clear_user_session()
+    flash('Has cerrado sesión correctamente', 'success')
+    return redirect(url_for('auth_login_page'))
+
+@app.route('/search')
+@login_required
+def search_page():
+    current_user = firebase_auth.get_current_user() if firebase_auth else None
+    user_name = current_user['user_name'] if current_user else 'Usuario'
+    
+    search_content = f'''
+    <div class="container">
+        <div class="user-info">
+            👋 Bienvenido, <strong>{user_name}</strong> | 
+            <a href="/logout">Cerrar Sesión</a>
+        </div>
+        
+        <h1>🔧 Auto Parts Finder</h1>
+        <div class="subtitle">Encuentra repuestos automotrices en tiendas de USA</div>
+        
+        <div class="tips">
+            💡 <strong>Consejos de búsqueda:</strong><br>
+            • Incluye año, marca y modelo de tu vehículo para mejores resultados<br>
+            • Usa nombres específicos: "brake pads", "oil filter", "spark plugs"<br>
+            • Puedes subir una foto del repuesto para búsqueda visual
+        </div>
+        
+        <!-- Información del vehículo -->
+        <div class="vehicle-form">
+            <h3>🚗 Información del Vehículo (Opcional)</h3>
+            <div class="vehicle-row">
+                <select id="vehicleYear">
+                    <option value="">Año</option>
+                </select>
+                <select id="vehicleMake">
+                    <option value="">Marca</option>
+                </select>
+                <select id="vehicleModel">
+                    <option value="">Modelo</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Búsqueda por texto -->
+        <div class="search-bar">
+            <input type="text" id="searchQuery" placeholder="Ejemplo: brake pads, oil filter, spark plugs..." maxlength="100">
+            <button onclick="searchParts()">🔍 Buscar</button>
+        </div>
+        
+        <div class="or-divider">
+            <span>O</span>
+        </div>
+        
+        <!-- Búsqueda por imagen -->
+        <div class="image-upload" onclick="document.getElementById('imageInput').click()">
+            <input type="file" id="imageInput" accept="image/*" onchange="handleImageUpload(event)">
+            <label>📷 Subir foto del repuesto</label>
+            <img id="imagePreview" class="image-preview" style="display: none;">
+        </div>
+        
+        <div class="loading" id="searchLoading">
+            <div class="spinner"></div>
+            <p>Buscando repuestos automotrices...</p>
+        </div>
+        
+        <div class="error" id="searchError"></div>
+        
+        <div id="searchResults"></div>
+    </div>
+    
+    <script>
+    // Datos de vehículos
+    const vehicleData = {json.dumps(VEHICLE_DATABASE)};
+    
+    // Inicializar selectores de vehículos
+    function initVehicleSelectors() {{
+        const yearSelect = document.getElementById('vehicleYear');
+        const makeSelect = document.getElementById('vehicleMake');
+        
+        // Llenar años (más recientes primero)
+        vehicleData.years.reverse().forEach(year => {{
+            const option = document.createElement('option');
+            option.value = year;
+            option.textContent = year;
+            yearSelect.appendChild(option);
+        }});
+        
+        // Llenar marcas
+        Object.keys(vehicleData.makes).forEach(make => {{
+            const option = document.createElement('option');
+            option.value = make;
+            option.textContent = make.charAt(0).toUpperCase() + make.slice(1);
+            makeSelect.appendChild(option);
+        }});
+        
+        // Evento para actualizar modelos cuando cambia la marca
+        makeSelect.addEventListener('change', updateModels);
+    }}
+    
+    function updateModels() {{
+        const makeSelect = document.getElementById('vehicleMake');
+        const modelSelect = document.getElementById('vehicleModel');
+        const selectedMake = makeSelect.value;
+        
+        // Limpiar modelos
+        modelSelect.innerHTML = '<option value="">Modelo</option>';
+        
+        if (selectedMake && vehicleData.makes[selectedMake]) {{
+            vehicleData.makes[selectedMake].forEach(model => {{
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model.toUpperCase();
+                modelSelect.appendChild(option);
+            }});
+        }}
+    }}
+    
+    // Manejar subida de imagen
+    function handleImageUpload(event) {{
+        const file = event.target.files[0];
+        if (file) {{
+            const reader = new FileReader();
+            reader.onload = function(e) {{
+                const preview = document.getElementById('imagePreview');
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+            }};
+            reader.readAsDataURL(file);
+        }}
+    }}
+    
+    // Búsqueda de repuestos
+    async function searchParts() {{
+        const query = document.getElementById('searchQuery').value.trim();
+        const imageInput = document.getElementById('imageInput');
+        const vehicleYear = document.getElementById('vehicleYear').value;
+        const vehicleMake = document.getElementById('vehicleMake').value;
+        const vehicleModel = document.getElementById('vehicleModel').value;
+        
+        if (!query && !imageInput.files[0]) {{
+            document.getElementById('searchError').textContent = 'Ingresa un término de búsqueda o sube una imagen';
+            document.getElementById('searchError').style.display = 'block';
+            return;
+        }}
+        
+        document.getElementById('searchLoading').style.display = 'block';
+        document.getElementById('searchError').style.display = 'none';
+        document.getElementById('searchResults').innerHTML = '';
+        
+        const formData = new FormData();
+        if (query) formData.append('query', query);
+        if (imageInput.files[0]) formData.append('image', imageInput.files[0]);
+        if (vehicleYear) formData.append('vehicle_year', vehicleYear);
+        if (vehicleMake) formData.append('vehicle_make', vehicleMake);
+        if (vehicleModel) formData.append('vehicle_model', vehicleModel);
+        
+        try {{
+            const response = await fetch('/api/search-parts', {{
+                method: 'POST',
+                body: formData
+            }});
+            
+            const result = await response.json();
+            
+            if (result.success) {{
+                displayResults(result.products, result.search_info);
+            }} else {{
+                document.getElementById('searchError').textContent = result.message || 'Error en la búsqueda';
+                document.getElementById('searchError').style.display = 'block';
+            }}
+        }} catch (error) {{
+            document.getElementById('searchError').textContent = 'Error de conexión';
+            document.getElementById('searchError').style.display = 'block';
+        }} finally {{
+            document.getElementById('searchLoading').style.display = 'none';
+        }}
+    }}
+    
+    function displayResults(products, searchInfo) {{
+        if (!products || products.length === 0) {{
+            document.getElementById('searchResults').innerHTML = '<p>No se encontraron repuestos</p>';
+            return;
+        }}
+        
+        let html = `
+            <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h3>✅ Encontrados ${{products.length}} repuestos automotrices</h3>
+                <p><strong>Búsqueda:</strong> ${{searchInfo.query || 'Imagen'}} ${{searchInfo.vehicle ? '| Vehículo: ' + searchInfo.vehicle : ''}}</p>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-top: 20px;">
+        `;
+        
+        products.forEach(product => {{
+            const partBadge = product.part_type === 'OEM' ? 
+                '<span class="part-badge">OEM</span>' : 
+                '<span class="part-badge aftermarket">Aftermarket</span>';
+            
+            html += `
+                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; background: white;">
+                    <h4 style="margin: 0 0 10px 0; color: #1e3c72;">
+                        ${{product.title}} ${{partBadge}}
+                    </h4>
+                    <p style="font-size: 18px; font-weight: bold; color: #28a745; margin: 5px 0;">
+                        ${{product.price}}
+                    </p>
+                    <p style="font-size: 14px; color: #666; margin: 5px 0;">
+                        <strong>Tienda:</strong> ${{product.source}}
+                        <span class="store-badge">${{product.source}}</span>
+                    </p>
+                    ${{product.rating ? `<p style="font-size: 13px; color: #666;">⭐ ${{product.rating}} (${{product.reviews}} reviews)</p>` : ''}}
+                    <a href="${{product.link}}" target="_blank" style="display: inline-block; background: #1e3c72; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-size: 14px; margin-top: 10px;">
+                        Ver en tienda →
+                    </a>
+                </div>
+            `;
+        }});
+        
+        html += '</div>';
+        document.getElementById('searchResults').innerHTML = html;
+    }}
+    
+    // Buscar al presionar Enter
+    document.getElementById('searchQuery').addEventListener('keypress', function(e) {{
+        if (e.key === 'Enter') {{
+            searchParts();
+        }}
+    }});
+    
+    // Inicializar cuando carga la página
+    initVehicleSelectors();
+    </script>
+    '''
+    
+    return render_page("Búsqueda - Auto Parts Finder", search_content)
+
+@app.route('/api/search-parts', methods=['POST'])
+@login_required
+def api_search_parts():
+    try:
+        # Obtener datos del request
+        query = request.form.get('query', '').strip()
+        image_file = request.files.get('image')
+        vehicle_year = request.form.get('vehicle_year', '').strip()
+        vehicle_make = request.form.get('vehicle_make', '').strip()
+        vehicle_model = request.form.get('vehicle_model', '').strip()
+        
+        # Procesar imagen si existe
+        image_content = None
+        if image_file and image_file.filename:
+            try:
+                image_content = image_file.read()
+                if not validate_image(image_content):
+                    return jsonify({
+                        'success': False, 
+                        'message': 'Imagen inválida. Use JPEG, PNG o WEBP.'
+                    })
+            except Exception as e:
+                print(f"Error procesando imagen: {e}")
+                return jsonify({
+                    'success': False, 
+                    'message': 'Error procesando la imagen'
+                })
+        
+        # Información del vehículo
+        vehicle_info = None
+        if vehicle_year or vehicle_make or vehicle_model:
+            vehicle_info = {
+                'year': vehicle_year,
+                'make': vehicle_make,
+                'model': vehicle_model
+            }
+        
+        # Validar que hay algo para buscar
+        if not query and not image_content:
+            return jsonify({
+                'success': False, 
+                'message': 'Proporciona un término de búsqueda o una imagen'
+            })
+        
+        # Realizar búsqueda
+        if not auto_parts_finder:
+            return jsonify({
+                'success': False, 
+                'message': 'Servicio de búsqueda no disponible'
+            })
+        
+        products = auto_parts_finder.search_auto_parts(
+            query=query,
+            image_content=image_content,
+            vehicle_info=vehicle_info
+        )
+        
+        # Información de la búsqueda
+        search_info = {
+            'query': query,
+            'has_image': bool(image_content),
+            'vehicle': None,
+            'source': products[0].get('search_source', 'unknown') if products else 'none'
+        }
+        
+        if vehicle_info and any(vehicle_info.values()):
+            vehicle_parts = []
+            if vehicle_info.get('year'):
+                vehicle_parts.append(vehicle_info['year'])
+            if vehicle_info.get('make'):
+                vehicle_parts.append(vehicle_info['make'].title())
+            if vehicle_info.get('model'):
+                vehicle_parts.append(vehicle_info['model'].upper())
+            search_info['vehicle'] = ' '.join(vehicle_parts)
+        
+        return jsonify({
+            'success': True,
+            'products': products,
+            'search_info': search_info,
+            'count': len(products)
+        })
+        
+    except Exception as e:
+        print(f"Error en búsqueda de auto parts: {e}")
+        return jsonify({
+            'success': False, 
+            'message': 'Error interno del servidor'
+        })
 
 @app.route('/api/scrape-test', methods=['GET'])
 @login_required
@@ -1297,6 +1433,12 @@ def test_scraping():
                 'success': False, 
                 'error': 'BeautifulSoup4 no disponible',
                 'install_cmd': 'pip install beautifulsoup4'
+            })
+        
+        if not ethical_scraper:
+            return jsonify({
+                'success': False,
+                'error': 'EthicalWebScraper no inicializado'
             })
         
         # Probar scraping de una tienda
@@ -1384,3 +1526,57 @@ def render_page(title, content):
 </head>
 <body>''' + content + '''</body>
 </html>'''
+    return template
+
+# ==============================================================================
+# INICIALIZACIÓN DE INSTANCIAS GLOBALES
+# ==============================================================================
+
+# Instancia global del scraper ético
+try:
+    ethical_scraper = EthicalWebScraper(delay_range=(1.5, 3.0), max_retries=3)
+    print("✅ EthicalWebScraper inicializado correctamente")
+except Exception as e:
+    print(f"❌ Error inicializando EthicalWebScraper: {e}")
+    ethical_scraper = None
+
+# Instancia global de Firebase Auth
+try:
+    firebase_auth = FirebaseAuth()
+    print("✅ FirebaseAuth inicializado correctamente")
+except Exception as e:
+    print(f"❌ Error inicializando FirebaseAuth: {e}")
+    firebase_auth = None
+
+# Instancia global de AutoPartsFinder
+try:
+    auto_parts_finder = AutoPartsFinder()
+    print("✅ AutoPartsFinder inicializado correctamente")
+except Exception as e:
+    print(f"❌ Error inicializando AutoPartsFinder: {e}")
+    auto_parts_finder = None
+
+# Configurar el scraper al inicio
+configure_scraper_for_auto_parts()
+
+# ==============================================================================
+# PUNTO DE ENTRADA DE LA APLICACIÓN
+# ==============================================================================
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    
+    print("=" * 60)
+    print("🔧 AUTO PARTS FINDER USA - INICIANDO")
+    print("=" * 60)
+    print(f"Puerto: {port}")
+    print(f"Debug: {debug_mode}")
+    print(f"PIL disponible: {PIL_AVAILABLE}")
+    print(f"Gemini disponible: {GEMINI_READY}")
+    print(f"BeautifulSoup4 disponible: {BS4_AVAILABLE}")
+    print(f"SerpAPI configurado: {auto_parts_finder.is_api_configured() if auto_parts_finder else False}")
+    print(f"Firebase Auth configurado: {firebase_auth.firebase_web_api_key is not None if firebase_auth else False}")
+    print("=" * 60)
+    
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
