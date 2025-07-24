@@ -997,7 +997,324 @@ def configure_scraper_for_auto_parts():
 
 @app.route('/')
 def home():
-    return render_page("Auto Parts Finder", "<div class='container'><h1>Auto Parts Finder</h1><div class='subtitle'>Encuentra repuestos automotrices en USA</div></div>")
+    """Página principal con búsqueda directa (sin login requerido para demo)"""
+    
+    home_content = f'''
+    <div class="container">
+        <h1>🔧 Auto Parts Finder</h1>
+        <div class="subtitle">Encuentra repuestos automotrices en tiendas de USA</div>
+        
+        <div class="tips">
+            💡 <strong>Consejos de búsqueda:</strong><br>
+            • Incluye año, marca y modelo de tu vehículo para mejores resultados<br>
+            • Usa nombres específicos: "brake pads", "oil filter", "spark plugs"<br>
+            • Puedes subir una foto del repuesto para búsqueda visual
+        </div>
+        
+        <!-- Información del vehículo -->
+        <div class="vehicle-form">
+            <h3>🚗 Información del Vehículo (Opcional)</h3>
+            <div class="vehicle-row">
+                <select id="vehicleYear">
+                    <option value="">Año</option>
+                </select>
+                <select id="vehicleMake">
+                    <option value="">Marca</option>
+                </select>
+                <select id="vehicleModel">
+                    <option value="">Modelo</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Búsqueda por texto -->
+        <div class="search-bar">
+            <input type="text" id="searchQuery" placeholder="Ejemplo: brake pads, oil filter, spark plugs..." maxlength="100">
+            <button onclick="searchParts()">🔍 Buscar</button>
+        </div>
+        
+        <div class="or-divider">
+            <span>O</span>
+        </div>
+        
+        <!-- Búsqueda por imagen -->
+        <div class="image-upload" onclick="document.getElementById('imageInput').click()">
+            <input type="file" id="imageInput" accept="image/*" onchange="handleImageUpload(event)">
+            <label>📷 Subir foto del repuesto</label>
+            <img id="imagePreview" class="image-preview" style="display: none;">
+        </div>
+        
+        <div class="loading" id="searchLoading">
+            <div class="spinner"></div>
+            <p>Buscando repuestos automotrices...</p>
+        </div>
+        
+        <div class="error" id="searchError"></div>
+        
+        <div id="searchResults"></div>
+        
+        <!-- Enlace para login -->
+        <div style="text-align: center; margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+            <p style="color: #666; margin-bottom: 10px;">¿Quieres guardar tus búsquedas y acceder a más funciones?</p>
+            <a href="/login" style="background: #1e3c72; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: 600;">
+                Iniciar Sesión
+            </a>
+        </div>
+    </div>
+    
+    <script>
+    // Datos de vehículos
+    const vehicleData = {json.dumps(VEHICLE_DATABASE)};
+    
+    // Inicializar selectores de vehículos
+    function initVehicleSelectors() {{
+        const yearSelect = document.getElementById('vehicleYear');
+        const makeSelect = document.getElementById('vehicleMake');
+        
+        // Llenar años (más recientes primero)
+        vehicleData.years.reverse().forEach(year => {{
+            const option = document.createElement('option');
+            option.value = year;
+            option.textContent = year;
+            yearSelect.appendChild(option);
+        }});
+        
+        // Llenar marcas
+        Object.keys(vehicleData.makes).forEach(make => {{
+            const option = document.createElement('option');
+            option.value = make;
+            option.textContent = make.charAt(0).toUpperCase() + make.slice(1);
+            makeSelect.appendChild(option);
+        }});
+        
+        // Evento para actualizar modelos cuando cambia la marca
+        makeSelect.addEventListener('change', updateModels);
+    }}
+    
+    function updateModels() {{
+        const makeSelect = document.getElementById('vehicleMake');
+        const modelSelect = document.getElementById('vehicleModel');
+        const selectedMake = makeSelect.value;
+        
+        // Limpiar modelos
+        modelSelect.innerHTML = '<option value="">Modelo</option>';
+        
+        if (selectedMake && vehicleData.makes[selectedMake]) {{
+            vehicleData.makes[selectedMake].forEach(model => {{
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model.toUpperCase();
+                modelSelect.appendChild(option);
+            }});
+        }}
+    }}
+    
+    // Manejar subida de imagen
+    function handleImageUpload(event) {{
+        const file = event.target.files[0];
+        if (file) {{
+            const reader = new FileReader();
+            reader.onload = function(e) {{
+                const preview = document.getElementById('imagePreview');
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+            }};
+            reader.readAsDataURL(file);
+        }}
+    }}
+    
+    // Búsqueda de repuestos (SIN LOGIN REQUERIDO)
+    async function searchParts() {{
+        const query = document.getElementById('searchQuery').value.trim();
+        const imageInput = document.getElementById('imageInput');
+        const vehicleYear = document.getElementById('vehicleYear').value;
+        const vehicleMake = document.getElementById('vehicleMake').value;
+        const vehicleModel = document.getElementById('vehicleModel').value;
+        
+        if (!query && !imageInput.files[0]) {{
+            document.getElementById('searchError').textContent = 'Ingresa un término de búsqueda o sube una imagen';
+            document.getElementById('searchError').style.display = 'block';
+            return;
+        }}
+        
+        document.getElementById('searchLoading').style.display = 'block';
+        document.getElementById('searchError').style.display = 'none';
+        document.getElementById('searchResults').innerHTML = '';
+        
+        const formData = new FormData();
+        if (query) formData.append('query', query);
+        if (imageInput.files[0]) formData.append('image', imageInput.files[0]);
+        if (vehicleYear) formData.append('vehicle_year', vehicleYear);
+        if (vehicleMake) formData.append('vehicle_make', vehicleMake);
+        if (vehicleModel) formData.append('vehicle_model', vehicleModel);
+        
+        try {{
+            const response = await fetch('/api/search-parts-public', {{
+                method: 'POST',
+                body: formData
+            }});
+            
+            const result = await response.json();
+            
+            if (result.success) {{
+                displayResults(result.products, result.search_info);
+            }} else {{
+                document.getElementById('searchError').textContent = result.message || 'Error en la búsqueda';
+                document.getElementById('searchError').style.display = 'block';
+            }}
+        }} catch (error) {{
+            document.getElementById('searchError').textContent = 'Error de conexión';
+            document.getElementById('searchError').style.display = 'block';
+        }} finally {{
+            document.getElementById('searchLoading').style.display = 'none';
+        }}
+    }}
+    
+    function displayResults(products, searchInfo) {{
+        if (!products || products.length === 0) {{
+            document.getElementById('searchResults').innerHTML = '<p>No se encontraron repuestos</p>';
+            return;
+        }}
+        
+        let html = `
+            <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h3>✅ Encontrados ${{products.length}} repuestos automotrices</h3>
+                <p><strong>Búsqueda:</strong> ${{searchInfo.query || 'Imagen'}} ${{searchInfo.vehicle ? '| Vehículo: ' + searchInfo.vehicle : ''}}</p>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-top: 20px;">
+        `;
+        
+        products.forEach(product => {{
+            const partBadge = product.part_type === 'OEM' ? 
+                '<span class="part-badge">OEM</span>' : 
+                '<span class="part-badge aftermarket">Aftermarket</span>';
+            
+            html += `
+                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; background: white;">
+                    <h4 style="margin: 0 0 10px 0; color: #1e3c72;">
+                        ${{product.title}} ${{partBadge}}
+                    </h4>
+                    <p style="font-size: 18px; font-weight: bold; color: #28a745; margin: 5px 0;">
+                        ${{product.price}}
+                    </p>
+                    <p style="font-size: 14px; color: #666; margin: 5px 0;">
+                        <strong>Tienda:</strong> ${{product.source}}
+                        <span class="store-badge">${{product.source}}</span>
+                    </p>
+                    ${{product.rating ? `<p style="font-size: 13px; color: #666;">⭐ ${{product.rating}} (${{product.reviews}} reviews)</p>` : ''}}
+                    <a href="${{product.link}}" target="_blank" style="display: inline-block; background: #1e3c72; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-size: 14px; margin-top: 10px;">
+                        Ver en tienda →
+                    </a>
+                </div>
+            `;
+        }});
+        
+        html += '</div>';
+        document.getElementById('searchResults').innerHTML = html;
+    }}
+    
+    // Buscar al presionar Enter
+    document.getElementById('searchQuery').addEventListener('keypress', function(e) {{
+        if (e.key === 'Enter') {{
+            searchParts();
+        }}
+    }});
+    
+    // Inicializar cuando carga la página
+    initVehicleSelectors();
+    </script>
+    '''
+    
+    return render_page("Auto Parts Finder - Encuentra Repuestos Automotrices", home_content)
+
+@app.route('/api/search-parts-public', methods=['POST'])
+def api_search_parts_public():
+    """Búsqueda pública sin login requerido"""
+    try:
+        # Obtener datos del request
+        query = request.form.get('query', '').strip()
+        image_file = request.files.get('image')
+        vehicle_year = request.form.get('vehicle_year', '').strip()
+        vehicle_make = request.form.get('vehicle_make', '').strip()
+        vehicle_model = request.form.get('vehicle_model', '').strip()
+        
+        # Procesar imagen si existe
+        image_content = None
+        if image_file and image_file.filename:
+            try:
+                image_content = image_file.read()
+                if not validate_image(image_content):
+                    return jsonify({
+                        'success': False, 
+                        'message': 'Imagen inválida. Use JPEG, PNG o WEBP.'
+                    })
+            except Exception as e:
+                print(f"Error procesando imagen: {e}")
+                return jsonify({
+                    'success': False, 
+                    'message': 'Error procesando la imagen'
+                })
+        
+        # Información del vehículo
+        vehicle_info = None
+        if vehicle_year or vehicle_make or vehicle_model:
+            vehicle_info = {
+                'year': vehicle_year,
+                'make': vehicle_make,
+                'model': vehicle_model
+            }
+        
+        # Validar que hay algo para buscar
+        if not query and not image_content:
+            return jsonify({
+                'success': False, 
+                'message': 'Proporciona un término de búsqueda o una imagen'
+            })
+        
+        # Realizar búsqueda
+        if not auto_parts_finder:
+            return jsonify({
+                'success': False, 
+                'message': 'Servicio de búsqueda no disponible'
+            })
+        
+        products = auto_parts_finder.search_auto_parts(
+            query=query,
+            image_content=image_content,
+            vehicle_info=vehicle_info
+        )
+        
+        # Información de la búsqueda
+        search_info = {
+            'query': query,
+            'has_image': bool(image_content),
+            'vehicle': None,
+            'source': products[0].get('search_source', 'unknown') if products else 'none'
+        }
+        
+        if vehicle_info and any(vehicle_info.values()):
+            vehicle_parts = []
+            if vehicle_info.get('year'):
+                vehicle_parts.append(vehicle_info['year'])
+            if vehicle_info.get('make'):
+                vehicle_parts.append(vehicle_info['make'].title())
+            if vehicle_info.get('model'):
+                vehicle_parts.append(vehicle_info['model'].upper())
+            search_info['vehicle'] = ' '.join(vehicle_parts)
+        
+        return jsonify({
+            'success': True,
+            'products': products,
+            'search_info': search_info,
+            'count': len(products)
+        })
+        
+    except Exception as e:
+        print(f"Error en búsqueda pública de auto parts: {e}")
+        return jsonify({
+            'success': False, 
+            'message': 'Error interno del servidor'
+        })
 
 @app.route('/login', methods=['GET'])
 def auth_login_page():
@@ -1026,6 +1343,9 @@ def auth_login_page():
         
         <div style="text-align: center; margin-top: 20px;">
             <p style="color: #666; font-size: 14px;">Demo: admin@test.com / password123</p>
+            <p style="margin-top: 15px;">
+                <a href="/" style="color: #1e3c72; text-decoration: none;">← Volver a búsqueda</a>
+            </p>
         </div>
     </div>
     
