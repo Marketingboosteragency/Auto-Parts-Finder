@@ -1,46 +1,4 @@
-# Inicializar componentes al importar
-initialize_components()
-
-# ==============================================================================
-# PUNTO DE ENTRADA PRINCIPAL
-# ==============================================================================
-
-if __name__ == '__main__':
-    print("=" * 70)
-    print("🔧 AUTO PARTS FINDER USA - SISTEMA DE REPUESTOS AUTOMOTRICES")
-    print("=" * 70)
-    
-    # Información del sistema
-    port = int(os.environ.get('PORT', 5000))
-    debug_mode = os.environ.get('FLASK_ENV') == 'development'
-    
-    print(f"🌐 Puerto: {port}")
-    print(f"🔧 Modo Debug: {debug_mode}")
-    print(f"🖼️  PIL (imágenes): {'✅ Disponible' if PIL_AVAILABLE else '❌ No disponible'}")
-    print(f"🤖 Gemini AI: {'✅ Disponible' if GEMINI_AVAILABLE else '❌ No disponible'}")
-    print(f"🕷️  BeautifulSoup: {'✅ Disponible' if BS4_AVAILABLE else '❌ No disponible'}")
-    print(f"🔐 Firebase Auth: {'✅ Configurado' if firebase_auth else '❌ Error'}")
-    print(f"🔍 Auto Parts Finder: {'✅ Activo' if auto_parts_finder else '❌ Error'}")
-    print("=" * 70)
-    print("🚀 Iniciando servidor...")
-    print("📝 Credenciales demo: admin@test.com / password123")
-    print("=" * 70)
-    
-    try:
-        app.run(
-            host='0.0.0.0', 
-            port=port, 
-            debug=debug_mode,
-            use_reloader=debug_mode
-        )
-    except Exception as e:
-        logger.error(f"❌ Error crítico iniciando la aplicación: {e}")
-        print(f"\n❌ ERROR CRÍTICO: {e}")
-        print("💡 Verificaciones:")
-        print("   - Puerto disponible")
-        print("   - Permisos de red")
-        print("   - Variables de entorno")
-        print("   - Dependencias instaladas") webapp.py - Auto Parts Finder USA - VERSIÓN CORREGIDA PARA PRODUCCIÓN
+# webapp.py - Auto Parts Finder USA - VERSIÓN CORREGIDA PARA PRODUCCIÓN
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
@@ -1452,4 +1410,46 @@ def initialize_components():
         logger.error(f"❌ Error inicializando AutoPartsFinder: {e}")
         auto_parts_finder = None
 
-#
+# Inicializar componentes al importar
+initialize_components()
+
+# ==============================================================================
+# PUNTO DE ENTRADA PRINCIPAL
+# ==============================================================================
+
+if __name__ == '__main__':
+    print("=" * 70)
+    print("🔧 AUTO PARTS FINDER USA - SISTEMA DE REPUESTOS AUTOMOTRICES")
+    print("=" * 70)
+    
+    # Información del sistema
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    
+    print(f"🌐 Puerto: {port}")
+    print(f"🔧 Modo Debug: {debug_mode}")
+    print(f"🖼️  PIL (imágenes): {'✅ Disponible' if PIL_AVAILABLE else '❌ No disponible'}")
+    print(f"🤖 Gemini AI: {'✅ Disponible' if GEMINI_AVAILABLE else '❌ No disponible'}")
+    print(f"🕷️  BeautifulSoup: {'✅ Disponible' if BS4_AVAILABLE else '❌ No disponible'}")
+    print(f"🔐 Firebase Auth: {'✅ Configurado' if firebase_auth else '❌ Error'}")
+    print(f"🔍 Auto Parts Finder: {'✅ Activo' if auto_parts_finder else '❌ Error'}")
+    print("=" * 70)
+    print("🚀 Iniciando servidor...")
+    print("📝 Credenciales demo: admin@test.com / password123")
+    print("=" * 70)
+    
+    try:
+        app.run(
+            host='0.0.0.0', 
+            port=port, 
+            debug=debug_mode,
+            use_reloader=debug_mode
+        )
+    except Exception as e:
+        logger.error(f"❌ Error crítico iniciando la aplicación: {e}")
+        print(f"\n❌ ERROR CRÍTICO: {e}")
+        print("💡 Verificaciones:")
+        print("   - Puerto disponible")
+        print("   - Permisos de red")
+        print("   - Variables de entorno")
+        print("   - Dependencias instaladas")
