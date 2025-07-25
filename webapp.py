@@ -1,4 +1,46 @@
-# webapp.py - Auto Parts Finder USA - VERSIÓN CORREGIDA PARA PRODUCCIÓN
+# Inicializar componentes al importar
+initialize_components()
+
+# ==============================================================================
+# PUNTO DE ENTRADA PRINCIPAL
+# ==============================================================================
+
+if __name__ == '__main__':
+    print("=" * 70)
+    print("🔧 AUTO PARTS FINDER USA - SISTEMA DE REPUESTOS AUTOMOTRICES")
+    print("=" * 70)
+    
+    # Información del sistema
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    
+    print(f"🌐 Puerto: {port}")
+    print(f"🔧 Modo Debug: {debug_mode}")
+    print(f"🖼️  PIL (imágenes): {'✅ Disponible' if PIL_AVAILABLE else '❌ No disponible'}")
+    print(f"🤖 Gemini AI: {'✅ Disponible' if GEMINI_AVAILABLE else '❌ No disponible'}")
+    print(f"🕷️  BeautifulSoup: {'✅ Disponible' if BS4_AVAILABLE else '❌ No disponible'}")
+    print(f"🔐 Firebase Auth: {'✅ Configurado' if firebase_auth else '❌ Error'}")
+    print(f"🔍 Auto Parts Finder: {'✅ Activo' if auto_parts_finder else '❌ Error'}")
+    print("=" * 70)
+    print("🚀 Iniciando servidor...")
+    print("📝 Credenciales demo: admin@test.com / password123")
+    print("=" * 70)
+    
+    try:
+        app.run(
+            host='0.0.0.0', 
+            port=port, 
+            debug=debug_mode,
+            use_reloader=debug_mode
+        )
+    except Exception as e:
+        logger.error(f"❌ Error crítico iniciando la aplicación: {e}")
+        print(f"\n❌ ERROR CRÍTICO: {e}")
+        print("💡 Verificaciones:")
+        print("   - Puerto disponible")
+        print("   - Permisos de red")
+        print("   - Variables de entorno")
+        print("   - Dependencias instaladas") webapp.py - Auto Parts Finder USA - VERSIÓN CORREGIDA PARA PRODUCCIÓN
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
@@ -158,11 +200,15 @@ class AutoPartsFinder:
         self.base_url = "https://serpapi.com/search"
         logger.info(f"SerpAPI configurado: {bool(self.api_key)}")
         
-        # Tiendas populares de auto parts
-        self.stores = [
-            'AutoZone', 'Advance Auto Parts', "O'Reilly Auto Parts", 
-            'NAPA', 'RockAuto', 'Amazon Automotive'
-        ]
+        # Tiendas populares de auto parts con URLs reales
+        self.stores = {
+            'AutoZone': 'https://www.autozone.com',
+            'Advance Auto Parts': 'https://shop.advanceautoparts.com', 
+            "O'Reilly Auto Parts": 'https://www.oreillyauto.com',
+            'NAPA': 'https://www.napaonline.com',
+            'RockAuto': 'https://www.rockauto.com',
+            'Amazon Automotive': 'https://www.amazon.com'
+        }
     
     def search_auto_parts(self, query=None, image_content=None, vehicle_info=None):
         """Búsqueda principal de repuestos"""
@@ -207,25 +253,32 @@ class AutoPartsFinder:
             return query or "auto parts"
     
     def _generate_sample_results(self, query):
-        """Generar resultados de ejemplo"""
+        """Generar resultados de ejemplo con enlaces reales"""
         try:
             results = []
             base_prices = [29.99, 45.99, 67.99, 89.99, 124.99, 199.99]
+            store_names = list(self.stores.keys())
             
             for i in range(6):
-                store = self.stores[i % len(self.stores)]
+                store_name = store_names[i % len(store_names)]
+                store_url = self.stores[store_name]
                 price = base_prices[i]
+                
+                # Generar URL específica para cada tienda
+                product_url = self._generate_store_specific_url(store_name, store_url, query)
                 
                 result = {
                     'title': f'{query.title()} - {"Premium OEM" if i % 2 == 0 else "Aftermarket Quality"}',
                     'price': f'${price:.2f}',
                     'price_numeric': price,
-                    'source': store,
-                    'link': f"https://www.google.com/search?tbm=shop&q={quote_plus(query + ' ' + store)}",
+                    'source': store_name,
+                    'link': product_url,
                     'rating': f"{4.0 + (i * 0.1):.1f}",
                     'reviews': str(100 + i * 50),
                     'part_type': 'OEM' if i % 2 == 0 else 'Aftermarket',
-                    'search_source': 'demo'
+                    'search_source': 'demo',
+                    'product_id': f"demo_product_{i+1}",
+                    'availability': 'In Stock' if i % 3 != 0 else 'Limited Stock'
                 }
                 results.append(result)
             
@@ -234,6 +287,34 @@ class AutoPartsFinder:
         except Exception as e:
             logger.error(f"Error generando ejemplos: {e}")
             return []
+    
+    def _generate_store_specific_url(self, store_name, base_url, query):
+        """Generar URL específica para cada tienda"""
+        try:
+            # Limpiar query para URL
+            clean_query = quote_plus(query.replace(' ', '+'))
+            
+            # URLs específicas para cada tienda
+            if 'AutoZone' in store_name:
+                return f"{base_url}/c/auto-parts/search?query={clean_query}"
+            elif 'Advance Auto Parts' in store_name:
+                return f"{base_url}/search?searchTerm={clean_query}"
+            elif "O'Reilly" in store_name:
+                return f"{base_url}/search?q={clean_query}"
+            elif 'NAPA' in store_name:
+                return f"{base_url}/search?query={clean_query}"
+            elif 'RockAuto' in store_name:
+                return f"{base_url}/catalog/x,carcode,1,parttype,{clean_query.replace('+', '%20')}"
+            elif 'Amazon' in store_name:
+                return f"{base_url}/s?k={clean_query}+automotive&ref=nb_sb_noss"
+            else:
+                # URL genérica como fallback
+                return f"{base_url}/search?q={clean_query}"
+                
+        except Exception as e:
+            logger.error(f"Error generando URL para {store_name}: {e}")
+            # Fallback a búsqueda genérica
+            return f"{base_url}/search?q={quote_plus(query)}"
 
 # ==============================================================================
 # FUNCIONES AUXILIARES
@@ -671,29 +752,41 @@ def home():
                 <div class="product-grid">
             `;
             
-            products.forEach((product, index) => {{
+            products.forEach((product, index) => {
                 const partBadge = product.part_type === 'OEM' ? 
                     '<span class="part-badge">OEM Original</span>' : 
                     '<span class="part-badge aftermarket">Aftermarket</span>';
                 
+                const availabilityColor = product.availability === 'In Stock' ? '#28a745' : '#ffc107';
+                const availabilityText = product.availability || 'Available';
+                
                 html += `
                     <div class="product-card">
                         <h4 class="product-title">
-                            ${{product.title}} ${{partBadge}}
+                            ${product.title} ${partBadge}
                         </h4>
                         <div class="product-price">
-                            ${{product.price}}
+                            ${product.price}
                         </div>
                         <div class="product-store">
-                            <strong>Tienda:</strong> ${{product.source}}
+                            <strong>Tienda:</strong> ${product.source}
                         </div>
-                        ${{product.rating ? `<div style="font-size: 13px; color: #666; margin: 8px 0;">⭐ ${{product.rating}} estrellas (${{product.reviews}} reseñas)</div>` : ''}}
-                        <a href="${{product.link}}" target="_blank" class="product-link">
-                            Ver en ${{product.source}} →
-                        </a>
+                        <div style="font-size: 13px; color: ${availabilityColor}; font-weight: 600; margin: 8px 0;">
+                            📦 ${availabilityText}
+                        </div>
+                        ${product.rating ? `<div style="font-size: 13px; color: #666; margin: 8px 0;">⭐ ${product.rating} estrellas (${product.reviews} reseñas)</div>` : ''}
+                        <div style="margin-top: 15px;">
+                            <a href="${product.link}" target="_blank" rel="noopener noreferrer" class="product-link" 
+                               onclick="trackProductClick('${product.source}', '${product.title}')">
+                                🛒 Comprar en ${product.source} →
+                            </a>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                            ID: ${product.product_id || 'N/A'} | Tipo: ${product.part_type}
+                        </div>
                     </div>
                 `;
-            }});
+            });
             
             html += '</div>';
             
@@ -701,46 +794,60 @@ def home():
                 <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-top: 30px; text-align: center;">
                     <h4 style="color: #1e3c72; margin-bottom: 15px;">💡 Consejos para comprar repuestos</h4>
                     <ul style="text-align: left; color: #666; max-width: 600px; margin: 0 auto;">
-                        <li style="margin-bottom: 8px;">Verifica la compatibilidad con tu vehículo antes de comprar</li>
-                        <li style="margin-bottom: 8px;">Compara precios entre diferentes tiendas</li>
-                        <li style="margin-bottom: 8px;">Lee las reseñas de otros compradores</li>
-                        <li style="margin-bottom: 8px;">Considera la garantía ofrecida por cada tienda</li>
+                        <li style="margin-bottom: 8px;">✅ Verifica la compatibilidad con tu vehículo antes de comprar</li>
+                        <li style="margin-bottom: 8px;">💰 Compara precios entre diferentes tiendas</li>
+                        <li style="margin-bottom: 8px;">⭐ Lee las reseñas de otros compradores</li>
+                        <li style="margin-bottom: 8px;">🔧 Considera la garantía ofrecida por cada tienda</li>
+                        <li style="margin-bottom: 8px;">📞 Contacta al vendedor si tienes dudas sobre compatibilidad</li>
                     </ul>
                 </div>
             `;
             
             resultsContainer.innerHTML = html;
-        }}
+            
+            // Scroll suave a los resultados
+            resultsContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
         
-        function showLoading(show) {{
+        // Función para rastrear clics en productos (opcional para analytics)
+        function trackProductClick(store, productTitle) {
+            try {
+                console.log(`Usuario hizo clic en: ${productTitle} de ${store}`);
+                // Aquí podrías agregar tracking de analytics si lo necesitas
+            } catch (error) {
+                console.error('Error tracking click:', error);
+            }
+        }
+        
+        function showLoading(show) {
             document.getElementById('searchLoading').style.display = show ? 'block' : 'none';
-        }}
+        }
         
-        function showError(message) {{
+        function showError(message) {
             const errorDiv = document.getElementById('searchError');
             errorDiv.textContent = message;
             errorDiv.style.display = 'block';
-        }}
+        }
         
-        function hideError() {{
+        function hideError() {
             document.getElementById('searchError').style.display = 'none';
-        }}
+        }
         
-        function clearResults() {{
+        function clearResults() {
             document.getElementById('searchResults').innerHTML = '';
-        }}
+        }
         
         // Buscar al presionar Enter
-        document.getElementById('searchQuery').addEventListener('keypress', function(e) {{
-            if (e.key === 'Enter') {{
+        document.getElementById('searchQuery').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
                 searchParts();
-            }}
-        }});
+            }
+        });
         
         // Inicializar cuando carga la página
-        document.addEventListener('DOMContentLoaded', function() {{
+        document.addEventListener('DOMContentLoaded', function() {
             initVehicleSelectors();
-        }});
+        });
         </script>
         '''
         
@@ -988,7 +1095,7 @@ def search_page():
                 const result = await response.json();
                 
                 if (result.success) {{
-                    displayResults(result.products);
+                    displayPremiumResults(result.products);
                 }} else {{
                     showError(result.message || 'Error en la búsqueda');
                 }}
@@ -1000,7 +1107,7 @@ def search_page():
             }}
         }}
         
-        function displayResults(products) {{
+        function displayPremiumResults(products) {{
             if (!products || products.length === 0) {{
                 showError('No se encontraron repuestos');
                 return;
@@ -1016,16 +1123,33 @@ def search_page():
             `;
             
             products.forEach(product => {{
+                const partBadge = product.part_type === 'OEM' ? 
+                    '<span class="part-badge">OEM Original</span>' : 
+                    '<span class="part-badge aftermarket">Aftermarket</span>';
+                
+                const availabilityColor = product.availability === 'In Stock' ? '#28a745' : '#ffc107';
+                const availabilityText = product.availability || 'Available';
+                
                 html += `
                     <div class="product-card">
-                        <h4 class="product-title">${{product.title}}</h4>
+                        <h4 class="product-title">${{product.title}} ${{partBadge}}</h4>
                         <div class="product-price">${{product.price}}</div>
                         <div class="product-store"><strong>Tienda:</strong> ${{product.source}}</div>
+                        <div style="font-size: 13px; color: ${{availabilityColor}}; font-weight: 600; margin: 8px 0;">
+                            📦 ${{availabilityText}}
+                        </div>
+                        ${{product.rating ? `<div style="font-size: 13px; color: #666; margin: 8px 0;">⭐ ${{product.rating}} estrellas (${{product.reviews}} reseñas)</div>` : ''}}
                         <div style="margin: 10px 0;">
                             <button onclick="saveFavorite('${{product.title}}')" style="background: #28a745; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
                                 ❤️ Guardar
                             </button>
-                            <a href="${{product.link}}" target="_blank" class="product-link">Ver en tienda →</a>
+                            <a href="${{product.link}}" target="_blank" rel="noopener noreferrer" class="product-link"
+                               onclick="trackProductClick('${{product.source}}', '${{product.title}}')">
+                                🛒 Comprar en ${{product.source}} →
+                            </a>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                            ID: ${{product.product_id || 'N/A'}} | Tipo: ${{product.part_type}}
                         </div>
                     </div>
                 `;
@@ -1033,6 +1157,18 @@ def search_page():
             
             html += '</div>';
             resultsContainer.innerHTML = html;
+            
+            // Scroll suave a los resultados
+            resultsContainer.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+        }}
+        
+        function trackProductClick(store, productTitle) {{
+            try {{
+                console.log(`Usuario PRO hizo clic en: ${{productTitle}} de ${{store}}`);
+                // Aquí podrías agregar tracking de analytics si lo necesitas
+            }} catch (error) {{
+                console.error('Error tracking click:', error);
+            }}
         }}
         
         function addToHistory(query) {{
@@ -1316,46 +1452,4 @@ def initialize_components():
         logger.error(f"❌ Error inicializando AutoPartsFinder: {e}")
         auto_parts_finder = None
 
-# Inicializar componentes al importar
-initialize_components()
-
-# ==============================================================================
-# PUNTO DE ENTRADA PRINCIPAL
-# ==============================================================================
-
-if __name__ == '__main__':
-    print("=" * 70)
-    print("🔧 AUTO PARTS FINDER USA - SISTEMA DE REPUESTOS AUTOMOTRICES")
-    print("=" * 70)
-    
-    # Información del sistema
-    port = int(os.environ.get('PORT', 5000))
-    debug_mode = os.environ.get('FLASK_ENV') == 'development'
-    
-    print(f"🌐 Puerto: {port}")
-    print(f"🔧 Modo Debug: {debug_mode}")
-    print(f"🖼️  PIL (imágenes): {'✅ Disponible' if PIL_AVAILABLE else '❌ No disponible'}")
-    print(f"🤖 Gemini AI: {'✅ Disponible' if GEMINI_AVAILABLE else '❌ No disponible'}")
-    print(f"🕷️  BeautifulSoup: {'✅ Disponible' if BS4_AVAILABLE else '❌ No disponible'}")
-    print(f"🔐 Firebase Auth: {'✅ Configurado' if firebase_auth else '❌ Error'}")
-    print(f"🔍 Auto Parts Finder: {'✅ Activo' if auto_parts_finder else '❌ Error'}")
-    print("=" * 70)
-    print("🚀 Iniciando servidor...")
-    print("📝 Credenciales demo: admin@test.com / password123")
-    print("=" * 70)
-    
-    try:
-        app.run(
-            host='0.0.0.0', 
-            port=port, 
-            debug=debug_mode,
-            use_reloader=debug_mode
-        )
-    except Exception as e:
-        logger.error(f"❌ Error crítico iniciando la aplicación: {e}")
-        print(f"\n❌ ERROR CRÍTICO: {e}")
-        print("💡 Verificaciones:")
-        print("   - Puerto disponible")
-        print("   - Permisos de red")
-        print("   - Variables de entorno")
-        print("   - Dependencias instaladas")
+#
